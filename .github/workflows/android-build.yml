@@ -1,0 +1,180 @@
+# Build APK — Samsung Galaxy S26 (base model, India)
+#
+# Target device profile:
+#   Galaxy S26 (India retail) — Exynos 2600, arm64-v8a only, Android 16 (API 36).
+# The project is minSdk 36 / targetSdk 36 and ships no native (.so) libraries, so a single
+# universal APK is already the correct artifact for this device — no ABI splits needed.
+name: Build APK (Galaxy S26)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Which APK to build"
+        type: choice
+        options: [debug, release, both]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: "21"
+  BUILD_TYPE: ${{ inputs.build_type || 'both' }}
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - run: chmod +x ./gradlew
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  build-apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      # Accepts SDK licenses so AGP can auto-download whatever platform/build-tools
+      # the build requests (this project asks for API 36.1).
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Pre-install SDK packages (best effort)
+        continue-on-error: true
+        run: |
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager "platforms;android-36.1" || echo "android-36.1 not available via sdkmanager; AGP will resolve it."
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - run: chmod +x ./gradlew
+
+      - name: Build debug APK
+        if: env.BUILD_TYPE == 'debug' || env.BUILD_TYPE == 'both'
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Build release APK
+        if: env.BUILD_TYPE == 'release' || env.BUILD_TYPE == 'both'
+        run: ./gradlew assembleRelease --stacktrace
+
+      # The release build has no signingConfig, so AGP emits app-release-unsigned.apk.
+      # If keystore secrets are configured, sign it here so it is installable on the S26.
+      - name: Sign release APK
+        id: sign
+        if: >-
+          (env.BUILD_TYPE == 'release' || env.BUILD_TYPE == 'both')
+          && secrets.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          unsigned=$(find app/build/outputs/apk/release -name '*-unsigned.apk' | head -1)
+          if [ -z "$unsigned" ]; then
+            echo "No unsigned release APK found; nothing to sign."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          build_tools=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/ | sort -V | tail -1)
+          "${build_tools}zipalign" -f -p 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
+          "${build_tools}apksigner" sign \
+            --ks "$RUNNER_TEMP/release.jks" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out app/build/outputs/apk/release/app-release-signed.apk \
+            "$RUNNER_TEMP/aligned.apk"
+          "${build_tools}apksigner" verify --print-certs app/build/outputs/apk/release/app-release-signed.apk
+          rm -f "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/aligned.apk"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Collect APKs
+        id: collect
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          sha=$(git rev-parse --short HEAD)
+          # If a signed release APK exists, drop the unsigned one — it cannot be installed.
+          if [ -f app/build/outputs/apk/release/app-release-signed.apk ]; then
+            rm -f app/build/outputs/apk/release/*-unsigned.apk
+          fi
+          for apk in $(find app/build/outputs/apk -name '*.apk'); do
+            base=$(basename "$apk" .apk)
+            cp "$apk" "artifacts/timedsilence-s26-${base#app-}-${sha}.apk"
+          done
+          ls -lh artifacts
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # Confirms the built APK actually matches the S26 profile (API 36+, arm64-v8a compatible).
+      - name: Inspect APK
+        continue-on-error: true
+        run: |
+          build_tools=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/ | sort -V | tail -1)
+          {
+            echo "### APKs built for Galaxy S26 (base, India)"
+            echo ""
+            echo "| APK | Size |"
+            echo "| --- | ---- |"
+            for apk in artifacts/*.apk; do
+              echo "| \`$(basename "$apk")\` | $(du -h "$apk" | cut -f1) |"
+            done
+            echo ""
+            echo '```'
+            "${build_tools}aapt2" dump badging "$(ls artifacts/*.apk | head -1)" \
+              | grep -E 'package:|sdkVersion|targetSdkVersion|native-code' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: timedsilence-apk-${{ steps.collect.outputs.sha }}
+          path: artifacts/*.apk
+          retention-days: 30
+          if-no-files-found: error
