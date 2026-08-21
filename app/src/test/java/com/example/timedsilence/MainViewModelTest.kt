@@ -15,14 +15,18 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mock
+import org.mockito.ArgumentMatchers.longThat
 import org.mockito.Mockito.atLeastOnce
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.mockito.MockitoAnnotations
@@ -48,6 +52,8 @@ class MainViewModelTest {
     @Mock
     lateinit var sharedPreferencesEditor: SharedPreferences.Editor
 
+    private val workInfoLiveData = MutableLiveData<List<WorkInfo>>()
+
     private lateinit var viewModel: MainViewModel
 
     @Before
@@ -63,7 +69,7 @@ class MainViewModelTest {
         `when`(sharedPreferencesEditor.putLong(anyString(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(sharedPreferencesEditor)
         `when`(sharedPreferencesEditor.clear()).thenReturn(sharedPreferencesEditor)
         
-        `when`(workManager.getWorkInfosForUniqueWorkLiveData(anyString())).thenReturn(MutableLiveData<List<WorkInfo>>())
+        `when`(workManager.getWorkInfosForUniqueWorkLiveData(anyString())).thenReturn(workInfoLiveData)
 
         `when`(application.applicationContext).thenReturn(application)
         `when`(application.packageName).thenReturn("com.example.timedsilence")
@@ -108,6 +114,8 @@ class MainViewModelTest {
         
         `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_MODE, -1)).thenReturn(savedMode)
         `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_VOLUME, -1)).thenReturn(savedVolume)
+        `when`(sharedPreferences.getLong(MainViewModel.KEY_END_TIME, 0L))
+            .thenReturn(System.currentTimeMillis() + 600_000L)
 
         viewModel.cancelSilence()
         testDispatcher.scheduler.advanceUntilIdle()
@@ -119,5 +127,113 @@ class MainViewModelTest {
         // Verify cleanup
         verify(sharedPreferencesEditor).clear()
         verify(notificationManager).cancel(MainViewModel.NOTIFICATION_ID)
+    }
+
+    @Test
+    fun `startSilence stores an exact end time`() {
+        `when`(audioManager.ringerMode).thenReturn(AudioManager.RINGER_MODE_NORMAL)
+        `when`(audioManager.getStreamVolume(AudioManager.STREAM_RING)).thenReturn(7)
+        val before = System.currentTimeMillis()
+
+        viewModel.startSilence(15, AudioManager.RINGER_MODE_SILENT)
+        val after = System.currentTimeMillis()
+
+        // 15 minutes means exactly 15 minutes - the countdown starts at 15:00.
+        verify(sharedPreferencesEditor).putLong(
+            org.mockito.ArgumentMatchers.eq(MainViewModel.KEY_END_TIME),
+            longThat { it in (before + 15 * 60_000L)..(after + 15 * 60_000L) }
+        )
+        assertTrue(viewModel.isSilenced.value)
+    }
+
+    @Test
+    fun `startSilence remembers the chosen duration and mode`() {
+        `when`(audioManager.ringerMode).thenReturn(AudioManager.RINGER_MODE_NORMAL)
+        `when`(audioManager.getStreamVolume(AudioManager.STREAM_RING)).thenReturn(7)
+
+        viewModel.startSilence(45, AudioManager.RINGER_MODE_SILENT)
+
+        verify(sharedPreferencesEditor).putInt("last_duration_minutes", 45)
+        verify(sharedPreferencesEditor).putInt("last_target_mode", AudioManager.RINGER_MODE_SILENT)
+    }
+
+    @Test
+    fun `extendSilence pushes the deadline out by fifteen minutes`() {
+        `when`(audioManager.ringerMode).thenReturn(AudioManager.RINGER_MODE_NORMAL)
+        `when`(audioManager.getStreamVolume(AudioManager.STREAM_RING)).thenReturn(7)
+
+        viewModel.startSilence(10, AudioManager.RINGER_MODE_VIBRATE)
+        val endBefore = viewModel.activeSession.value!!.endTimeMillis
+
+        viewModel.extendSilence()
+
+        val endAfter = viewModel.activeSession.value!!.endTimeMillis
+        org.junit.Assert.assertEquals(
+            endBefore + MainViewModel.EXTENSION_MINUTES * 60_000L,
+            endAfter
+        )
+        verify(sharedPreferencesEditor).putLong(MainViewModel.KEY_END_TIME, endAfter)
+    }
+
+    @Test
+    fun `requestStart without DND access parks the request instead of starting`() {
+        `when`(notificationManager.isNotificationPolicyAccessGranted).thenReturn(false)
+
+        val started = viewModel.requestStart(30, AudioManager.RINGER_MODE_VIBRATE)
+
+        assertFalse(started)
+        assertTrue(viewModel.hasPendingStart.value)
+        assertFalse(viewModel.isSilenced.value)
+        verify(audioManager, never()).ringerMode = anyInt()
+    }
+
+    @Test
+    fun `onResumed completes a parked start once DND access is granted`() {
+        `when`(notificationManager.isNotificationPolicyAccessGranted).thenReturn(false)
+        `when`(audioManager.ringerMode).thenReturn(AudioManager.RINGER_MODE_NORMAL)
+        `when`(audioManager.getStreamVolume(AudioManager.STREAM_RING)).thenReturn(7)
+        viewModel.requestStart(30, AudioManager.RINGER_MODE_VIBRATE)
+
+        // The user grants access on the Settings screen and comes back.
+        `when`(notificationManager.isNotificationPolicyAccessGranted).thenReturn(true)
+        viewModel.onResumed()
+
+        assertFalse(viewModel.hasPendingStart.value)
+        assertTrue(viewModel.isSilenced.value)
+        verify(audioManager).ringerMode = AudioManager.RINGER_MODE_VIBRATE
+    }
+
+    @Test
+    fun `work status updates never wipe the captured session`() {
+        `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_MODE, -1))
+            .thenReturn(AudioManager.RINGER_MODE_NORMAL)
+        `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_VOLUME, -1)).thenReturn(5)
+        `when`(sharedPreferences.getLong(MainViewModel.KEY_END_TIME, 0L))
+            .thenReturn(System.currentTimeMillis() + 600_000L)
+
+        // WorkManager reports nothing queued yet - it lags behind an enqueue.
+        // That must not be read as "the session is over".
+        testDispatcher.scheduler.runCurrent()
+        workInfoLiveData.value = emptyList()
+        testDispatcher.scheduler.runCurrent()
+
+        assertTrue(viewModel.isSilenced.value)
+        verify(sharedPreferencesEditor, never()).clear()
+        verify(notificationManager, never()).cancel(MainViewModel.NOTIFICATION_ID)
+    }
+
+    @Test
+    fun `a session whose deadline has passed is restored on refresh`() {
+        `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_MODE, -1))
+            .thenReturn(AudioManager.RINGER_MODE_NORMAL)
+        `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_VOLUME, -1)).thenReturn(5)
+        `when`(sharedPreferences.getLong(MainViewModel.KEY_END_TIME, 0L))
+            .thenReturn(System.currentTimeMillis() - 60_000L)
+
+        viewModel.refreshState()
+
+        verify(audioManager).ringerMode = AudioManager.RINGER_MODE_NORMAL
+        verify(sharedPreferencesEditor).clear()
+        assertFalse(viewModel.isSilenced.value)
     }
 }

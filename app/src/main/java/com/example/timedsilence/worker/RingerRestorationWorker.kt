@@ -1,48 +1,57 @@
 package com.example.timedsilence.worker
 
-import android.app.NotificationManager
 import android.content.Context
-import android.media.AudioManager
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.example.timedsilence.util.RestorationScheduler
+import com.example.timedsilence.util.RingerRestorer
+import com.example.timedsilence.util.SilenceNotifications
+import com.example.timedsilence.util.SilenceStore
 
+/**
+ * Backstop for the exact restoration alarm.
+ *
+ * The alarm in [RestorationScheduler] is what makes restoration land on time;
+ * this worker exists so the ringer still comes back if that alarm is dropped, and
+ * because WorkManager re-queues it automatically after a reboot. It reads the
+ * session from [SilenceStore] rather than from its input data so that an extend
+ * made after the job was queued is honoured.
+ */
 class RingerRestorationWorker(
     context: Context,
     params: WorkerParameters
 ) : CoroutineWorker(context, params) {
 
-    override suspend fun doWork(): androidx.work.ListenableWorker.Result {
-        val originalMode = inputData.getInt(KEY_ORIGINAL_MODE, AudioManager.RINGER_MODE_NORMAL)
-        val originalVolume = inputData.getInt(KEY_ORIGINAL_VOLUME, -1)
+    override suspend fun doWork(): Result {
+        val session = SilenceStore.read(applicationContext)
+        if (session == null) {
+            // The alarm already restored the ringer and cleared the session.
+            SilenceNotifications.cancel(applicationContext)
+            return Result.success()
+        }
 
-        val audioManager = applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        // WorkManager's delay is only a lower bound, and the session may have been
+        // extended since this job was queued - re-arm rather than restoring early.
+        if (!session.isDue(System.currentTimeMillis() + DUE_TOLERANCE_MILLIS)) {
+            Log.d(TAG, "Ran before the session was due, re-arming for ${session.endTimeMillis}")
+            RestorationScheduler.schedule(applicationContext, session.endTimeMillis)
+            return Result.success()
+        }
 
-        return try {
-            if (notificationManager.isNotificationPolicyAccessGranted) {
-                Log.d("RingerRestorationWorker", "Restoring ringer mode to $originalMode")
-                audioManager.ringerMode = originalMode
-                
-                if (originalVolume != -1) {
-                    audioManager.setStreamVolume(AudioManager.STREAM_RING, originalVolume, 0)
-                }
-
-                // Dismiss the ongoing notification
-                notificationManager.cancel(1001) // Matches NOTIFICATION_ID in ViewModel
-                
-                androidx.work.ListenableWorker.Result.success()
-            } else {
-                androidx.work.ListenableWorker.Result.failure()
-            }
-        } catch (e: Exception) {
-            Log.e("RingerRestorationWorker", "Error restoring ringer", e)
-            androidx.work.ListenableWorker.Result.retry()
+        // Deliberately no Notification Policy check here: bailing out when DND
+        // access had been revoked left the phone silent forever. Attempt the
+        // restore and let WorkManager retry if the platform refuses.
+        return if (RingerRestorer.restore(applicationContext)) {
+            Result.success()
+        } else {
+            Log.w(TAG, "Could not restore the ringer, scheduling a retry")
+            Result.retry()
         }
     }
 
     companion object {
-        const val KEY_ORIGINAL_MODE = "original_mode"
-        const val KEY_ORIGINAL_VOLUME = "original_volume"
+        private const val TAG = "RingerRestorationWorker"
+        private const val DUE_TOLERANCE_MILLIS = 2_000L
     }
 }

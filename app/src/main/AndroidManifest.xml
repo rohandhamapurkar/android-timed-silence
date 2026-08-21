@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Fires the restoration at the exact minute the user picked, even in Doze. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Alarms do not survive a reboot; re-arm an in-flight session on boot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -28,12 +32,34 @@
             </intent-filter>
         </activity>
 
+        <!--
+            Restoration alarm and notification actions. Targeted by explicit
+            intents only, so it stays unexported.
+        -->
         <receiver
             android:name=".util.TimedSilenceReceiver"
             android:exported="false">
             <intent-filter>
+                <action android:name="com.example.timedsilence.ACTION_RESTORE" />
                 <action android:name="com.example.timedsilence.ACTION_STOP" />
                 <action android:name="com.example.timedsilence.ACTION_EXTEND" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Re-arms an in-flight session after events that drop pending alarms.
+            Exported because these are protected system broadcasts, which only the
+            system can send.
+        -->
+        <receiver
+            android:name=".util.BootReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
     </application>

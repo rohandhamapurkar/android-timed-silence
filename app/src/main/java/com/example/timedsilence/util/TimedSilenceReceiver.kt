@@ -1,133 +1,69 @@
 package com.example.timedsilence.util
 
-import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.media.AudioManager
 import android.util.Log
-import androidx.core.content.edit
-import androidx.work.Data
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import com.example.timedsilence.MainViewModel
-import com.example.timedsilence.worker.RingerRestorationWorker
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
 import java.util.concurrent.TimeUnit
-import androidx.core.app.NotificationCompat
 
+/**
+ * Handles the exact restoration alarm and the ongoing notification's actions.
+ *
+ * This runs without the app being open: the alarm is delivered to the receiver
+ * even when the process has been killed and the device is locked.
+ */
 class TimedSilenceReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        val action = intent.action ?: return
-        val workManager = WorkManager.getInstance(context)
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val sharedPrefs = context.getSharedPreferences("timed_silence_prefs", Context.MODE_PRIVATE)
-
-        when (action) {
+        when (intent.action) {
+            ACTION_RESTORE -> onRestoreAlarm(context)
             ACTION_STOP -> {
-                Log.d("TimedSilenceReceiver", "Stopping silence via notification action")
-                workManager.cancelUniqueWork("restoration_work")
-                
-                val mode = sharedPrefs.getInt("captured_mode", -1)
-                val volume = sharedPrefs.getInt("captured_volume", -1)
-
-                if (mode != -1) {
-                    audioManager.ringerMode = mode
-                    if (volume != -1) {
-                        audioManager.setStreamVolume(AudioManager.STREAM_RING, volume, 0)
-                    }
-                }
-                
-                sharedPrefs.edit { clear() }
-                notificationManager.cancel(MainViewModel.NOTIFICATION_ID)
+                Log.d(TAG, "Restoring early from the notification action")
+                RingerRestorer.restore(context, tearDownOnFailure = true)
             }
-            ACTION_EXTEND -> {
-                Log.d("TimedSilenceReceiver", "Extending silence via notification action")
-                val modeToRestore = sharedPrefs.getInt("captured_mode", -1)
-                val volumeToRestore = sharedPrefs.getInt("captured_volume", -1)
-                
-                if (modeToRestore == -1) return
-
-                // Add 15 minutes to the extension
-                val extensionMinutes = 15
-                
-                // We need to calculate the new total duration or just reschedule the work.
-                // However, we don't easily know the remaining time from WorkManager here.
-                // A simpler approach for "Extend" is to just set a new OneTimeWorkRequest 
-                // starting from NOW + 15 minutes (or some other logic).
-                
-                // Let's assume Extend means "Add 15 minutes to the current scheduled time".
-                // Since we don't track the end time in prefs yet, let's start tracking it.
-                
-                val currentEndTime = sharedPrefs.getLong("end_time_millis", System.currentTimeMillis())
-                val newEndTime = currentEndTime + TimeUnit.MINUTES.toMillis(extensionMinutes.toLong())
-                val delayMillis = newEndTime - System.currentTimeMillis()
-                
-                sharedPrefs.edit {
-                    putLong("end_time_millis", newEndTime)
-                }
-
-                val inputData = Data.Builder()
-                    .putInt(RingerRestorationWorker.KEY_ORIGINAL_MODE, modeToRestore)
-                    .putInt(RingerRestorationWorker.KEY_ORIGINAL_VOLUME, volumeToRestore)
-                    .build()
-
-                val restorationWork = OneTimeWorkRequestBuilder<RingerRestorationWorker>()
-                    .setInitialDelay(delayMillis.coerceAtLeast(0), TimeUnit.MILLISECONDS)
-                    .setInputData(inputData)
-                    .addTag("ringer_restoration")
-                    .build()
-
-                workManager.enqueueUniqueWork(
-                    "restoration_work",
-                    ExistingWorkPolicy.REPLACE,
-                    restorationWork
-                )
-
-                // Update notification
-                updateNotification(context, notificationManager, newEndTime)
-            }
+            ACTION_EXTEND -> onExtend(context)
+            else -> Log.w(TAG, "Ignoring unexpected action ${intent.action}")
         }
     }
 
-    private fun updateNotification(context: Context, notificationManager: NotificationManager, endTimeMillis: Long) {
-        val endTimeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(endTimeMillis)
-        
-        val stopIntent = Intent(context, TimedSilenceReceiver::class.java).apply {
-            action = ACTION_STOP
+    private fun onRestoreAlarm(context: Context) {
+        val session = SilenceStore.read(context)
+        if (session == null) {
+            // Already restored by another trigger.
+            SilenceNotifications.cancel(context)
+            return
         }
-        val stopPendingIntent = android.app.PendingIntent.getBroadcast(
-            context, 0, stopIntent, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val extendIntent = Intent(context, TimedSilenceReceiver::class.java).apply {
-            action = ACTION_EXTEND
+        if (!session.isDue(System.currentTimeMillis() + DUE_TOLERANCE_MILLIS)) {
+            // The session was extended after this alarm was armed. Re-arm for the
+            // new deadline instead of ending the session early.
+            Log.d(TAG, "Alarm fired early, re-arming for ${session.endTimeMillis}")
+            RestorationScheduler.schedule(context, session.endTimeMillis)
+            SilenceNotifications.showOngoing(context, session.endTimeMillis)
+            return
         }
-        val extendPendingIntent = android.app.PendingIntent.getBroadcast(
-            context, 1, extendIntent, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        Log.d(TAG, "Restoration alarm fired, restoring ringer")
+        RingerRestorer.restore(context)
+    }
 
-        val notification = NotificationCompat.Builder(context, "timed_silence_channel")
-            .setSmallIcon(android.R.drawable.ic_lock_silent_mode)
-            .setContentTitle("Timed Silence Extended")
-            .setContentText("Phone will be restored at $endTimeStr")
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
-            .addAction(android.R.drawable.ic_input_add, "Extend +15m", extendPendingIntent)
-            .build()
+    private fun onExtend(context: Context) {
+        val session = SilenceStore.read(context) ?: return
+        // Extend from the current deadline, or from now if it has already passed.
+        val base = maxOf(session.endTimeMillis, System.currentTimeMillis())
+        val newEndTime = base + TimeUnit.MINUTES.toMillis(SilenceNotifications.EXTENSION_MINUTES.toLong())
 
-        notificationManager.notify(MainViewModel.NOTIFICATION_ID, notification)
+        SilenceStore.updateEndTime(context, newEndTime)
+        RestorationScheduler.schedule(context, newEndTime)
+        SilenceNotifications.showOngoing(context, newEndTime)
+        Log.d(TAG, "Extended silence to $newEndTime")
     }
 
     companion object {
+        const val ACTION_RESTORE = "com.example.timedsilence.ACTION_RESTORE"
         const val ACTION_STOP = "com.example.timedsilence.ACTION_STOP"
         const val ACTION_EXTEND = "com.example.timedsilence.ACTION_EXTEND"
+
+        /** Alarms may be delivered a moment early; treat that as "due". */
+        private const val DUE_TOLERANCE_MILLIS = 2_000L
+        private const val TAG = "TimedSilenceReceiver"
     }
 }
