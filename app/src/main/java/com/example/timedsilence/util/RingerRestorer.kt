@@ -53,6 +53,7 @@ object RingerRestorer {
         SilenceStore.clear(appContext)
         SilenceNotifications.cancel(appContext)
         RestorationScheduler.cancel(appContext, workManager)
+        if (expired) SilenceNotifications.showRestored(appContext)
         return applied
     }
 

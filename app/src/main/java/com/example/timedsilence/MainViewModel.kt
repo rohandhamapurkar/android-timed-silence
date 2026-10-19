@@ -226,6 +226,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // cannot leave a silenced phone without a scheduled expiry.
             RestorationScheduler.schedule(getApplication(), endTimeMillis, workManager)
             audioManager.ringerMode = targetMode
+            SilenceNotifications.clearConfirmation(getApplication())
             SilenceNotifications.showOngoing(getApplication(), endTimeMillis)
 
             setActive(ActiveSession(endTimeMillis, targetMode))

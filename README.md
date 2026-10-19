@@ -11,6 +11,7 @@
 *   **Ending volume**: Choose 1–100% ring volume at expiry (default 100%). Cancelling early restores the original volume instead.
 *   **Mode Choice**: Easily toggle between **Silent** and **Vibrate** modes for the timed period.
 *   **Status Notification**: An ongoing notification keeps you informed of the active session, showing the exact time your ringer will be restored.
+*   **Expiry confirmation**: A quiet, dismissible notification confirms when the ringer successfully turned on. Failed restoration shows a recovery notification instead.
 *   **Reliability**: An **exact alarm** enables audible ringing at expiry, with a **WorkManager** job as a backstop. The saved original settings are used when cancelling early. Expiry is handled even when the app is closed, the screen is locked or the device has been restarted.
 *   **DND Access**: Seamlessly handles the "Notification Policy Access" required to modify ringer modes on modern Android versions.
 *   **Version display**: The app shows its version below the main controls; release APKs use the GitHub tag's version.

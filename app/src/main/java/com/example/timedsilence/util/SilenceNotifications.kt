@@ -23,6 +23,7 @@ object SilenceNotifications {
 
     const val CHANNEL_ID = "timed_silence_channel"
     const val NOTIFICATION_ID = 1001
+    const val CONFIRMATION_ID = 1002
     const val EXTENSION_MINUTES = 15
 
     private const val TAG = "SilenceNotifications"
@@ -78,6 +79,30 @@ object SilenceNotifications {
     fun cancel(context: Context) {
         runCatching { notificationManager(context)?.cancel(NOTIFICATION_ID) }
             .onFailure { Log.w(TAG, "Could not cancel the ongoing notification", it) }
+    }
+
+    fun clearConfirmation(context: Context) {
+        runCatching { notificationManager(context)?.cancel(CONFIRMATION_ID) }
+            .onFailure { Log.w(TAG, "Could not clear the previous confirmation", it) }
+    }
+
+    /** Separate ID keeps a late duplicate trigger from removing this confirmation. */
+    fun showRestored(context: Context, restoredAtMillis: Long = System.currentTimeMillis()) {
+        createChannel(context)
+        runCatching {
+            val restoredAt = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(restoredAtMillis))
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+                .setContentTitle("Ringer turned on")
+                .setContentText("Timer finished. Ringer turned on at $restoredAt.")
+                .setWhen(restoredAtMillis)
+                .setShowWhen(true)
+                .setSilent(true)
+                .setAutoCancel(true)
+                .setContentIntent(contentIntent(context))
+                .build()
+            notificationManager(context)?.notify(CONFIRMATION_ID, notification)
+        }.onFailure { Log.w(TAG, "Could not post the restoration confirmation", it) }
     }
 
     fun showRestorationFailed(context: Context) {
