@@ -10,7 +10,7 @@
 *   **Smart Minute Picker**: A high-performance, smooth-scrolling wheel to select your silence duration from 1 to 120 minutes.
 *   **Mode Choice**: Easily toggle between **Silent** and **Vibrate** modes for the timed period.
 *   **Status Notification**: An ongoing notification keeps you informed of the active session, showing the exact time your ringer will be restored.
-*   **Reliability**: Original ringer settings (mode and volume) are persisted to disk and restored by an **exact alarm**, with a **WorkManager** job as a backstop. Restoration happens even when the app is closed, has been swapped out of memory, the screen is locked or the device has been restarted.
+*   **Reliability**: An **exact alarm** enables audible ringing at expiry, with a **WorkManager** job as a backstop. The saved original settings are used when cancelling early. Expiry is handled even when the app is closed, the screen is locked or the device has been restarted.
 *   **DND Access**: Seamlessly handles the "Notification Policy Access" required to modify ringer modes on modern Android versions.
 
 ## 🛠️ Tech Stack
@@ -49,6 +49,36 @@ To function correctly, TimedSilence requires:
 *   **Receive Boot Completed**: To re-arm an in-flight session after a restart.
 
 ## 📦 Building & Sharing
+
+Download the debug APK from the **Assets** section of the
+[latest GitHub release](https://github.com/rohandhamapurkar/android-timed-silence/releases/latest).
+The APK requires **Android 16+ (API 36)** and is built for internal sharing.
+
+### Automated releases
+
+The [release workflow](.github/workflows/android-build.yml) runs **only when a tag
+is pushed**. Branch pushes, pull requests and manual dispatches do not build APKs.
+
+To publish a version, create a GitHub release with a **new tag targeting `main`**,
+or tag the desired commit locally and push it:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+Use a new version tag for each release. The workflow builds the debug APK and
+attaches it to the matching GitHub release. If no release exists, it creates one
+with generated notes. Existing release notes and publication status are preserved;
+re-running the tag workflow replaces an APK asset with the same filename.
+
+CI uses JDK 21 and Android SDK command-line tools. SDK setup explicitly installs
+`platform-tools`, avoiding the obsolete `tools` package that previously caused
+the pipeline to fail.
+
+### Local builds
 
 See [BUILDING.md](BUILDING.md) for how to produce the small (~6.5 MB) debug APK
 for internal sharing, and the gotchas that keep it small.
