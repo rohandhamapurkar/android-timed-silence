@@ -89,6 +89,12 @@ CI uses JDK 21 and Android SDK command-line tools. SDK setup explicitly installs
 `platform-tools`, avoiding the obsolete `tools` package that previously caused
 the pipeline to fail.
 
+Before publishing an APK, CI runs Android unit tests, lint and APK-verifier tests.
+It verifies the APK signature against the pinned persistent certificate, and checks
+the package ID, tag-derived version name/code, Android 16 compatibility and debug
+build flag. A failed check blocks publication. Test and lint reports are saved as
+workflow artifacts, including when a build fails.
+
 ### Local builds
 
 See [BUILDING.md](BUILDING.md) for how to produce the small (~6.5 MB) debug APK

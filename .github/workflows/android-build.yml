@@ -68,10 +68,25 @@ jobs:
           chmod 600 "$keystore_path"
           echo "TIMEDSILENCE_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
 
-      - name: Build debug APK
+      - name: Test APK verification checks
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Test, lint and build debug APK
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: ./gradlew assembleDebug --stacktrace -PappVersion="$RELEASE_TAG"
+        run: ./gradlew clean testDebugUnitTest lintDebug assembleDebug --stacktrace -PappVersion="$RELEASE_TAG"
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-check-reports-${{ github.run_id }}
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Collect APK
         id: collect
@@ -84,20 +99,26 @@ jobs:
           ls -lh artifacts
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      # Confirms the built APK matches the S26 profile (API 36+, arm64-v8a compatible).
-      - name: Inspect APK
-        continue-on-error: true
+      - name: Verify APK version and signing identity
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          # Public fingerprint of the persistent key, pinned independently of the secret.
+          APK_CERT_SHA256: 89fef9d4cba0e84a04f4b46a83d63645d01a62035a2c34529fe815e72f7a630d
         run: |
+          set -euo pipefail
           build_tools=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/ | sort -V | tail -1)
           apk=$(ls artifacts/*.apk | head -1)
+          python3 .github/scripts/verify_apk.py \
+            --apk "$apk" --tag "$RELEASE_TAG" \
+            --aapt2 "${build_tools}aapt2" --apksigner "${build_tools}apksigner" \
+            --expected-cert-sha256 "$APK_CERT_SHA256" > apk-verification.json
           {
             echo "### Debug APK for Galaxy S26 (base, India)"
             echo ""
             echo "\`$(basename "$apk")\` — $(du -h "$apk" | cut -f1)"
             echo ""
             echo '```'
-            "${build_tools}aapt2" dump badging "$apk" \
-              | grep -E 'package:|sdkVersion|targetSdkVersion|native-code' || true
+            cat apk-verification.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

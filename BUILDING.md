@@ -110,6 +110,11 @@ git push origin v1.1.0
 ```
 
 The workflow builds the debug APK and attaches it to the release for that tag.
+Publication requires passing unit tests, Android lint and APK-verifier tests.
+The final APK must have a valid signature matching the pinned certificate, the
+expected application ID and tag-derived version, API 36 minimum/target levels and
+the debug flag. Verification runs before APK uploads. Test and lint reports are
+uploaded as separate workflow artifacts even if checks fail.
 If there is no release yet, it creates one with generated notes. If the release
 already exists, its title, notes and publication status are preserved. Re-running
 the workflow replaces the APK asset with the same filename. Creating a release
@@ -141,3 +146,9 @@ workflow if needed.
 - [ ] Build succeeds and all unit tests pass
 - [ ] APK size is in the single-digit MB range (if not, see "Why `clean` matters")
 - [ ] Installed once on a real device: session starts, ringer restores on expiry
+
+The APK publication checker has its own local tests:
+
+```bash
+python -m unittest discover -s .github/scripts -p 'test_*.py'
+```
