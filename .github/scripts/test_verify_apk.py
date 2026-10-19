@@ -45,6 +45,18 @@ class VerifyApkTest(unittest.TestCase):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 release_version(tag)
 
+    def test_accepts_scheme_named_signers_from_new_sdk_tools(self):
+        for labels in [("V2 Signer",), ("V2 Signer", "V3 Signer #1", "V3.1 Signer")]:
+            certs = "Number of signers: 1\n" + "\n".join(
+                f"{label}: certificate SHA-256 digest: {self.fingerprint}" for label in labels)
+            self.verify(certificates=certs)
+
+    def test_rejects_multiple_modern_signers_or_conflicting_scheme_certificates(self):
+        for certs in [f"Number of signers: 2\nV2 Signer: certificate SHA-256 digest: {self.fingerprint}",
+                      f"Number of signers: 1\nV2 Signer: certificate SHA-256 digest: {self.fingerprint}\nV3 Signer: certificate SHA-256 digest: {'cd' * 32}"]:
+            with self.assertRaises(ValueError):
+                self.verify(certificates=certs)
+
     def test_version_codes_increase_across_patch_minor_and_major(self):
         codes = [release_version(tag)[1] for tag in ["v1.0.1", "v1.0.2", "v1.1.0", "v2.0.0"]]
         self.assertEqual(codes, sorted(set(codes)))

@@ -34,8 +34,12 @@ def verify_metadata(badging, certificates, tag, expected_certificate):
     expected_certificate = expected_certificate.replace(":", "").lower()
     if not re.fullmatch(r"[0-9a-f]{64}", expected_certificate):
         raise ValueError("Expected signing fingerprint must be a SHA-256 digest")
-    actual = re.findall(r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)\s*$", certificates, re.MULTILINE)
-    if len(actual) != 1 or actual[0].lower() != expected_certificate:
+    actual = re.findall(r"^(?:Signer #\d+|V\d+(?:\.\d+)? Signer(?: #\d+)?):? certificate SHA-256 digest: ([0-9a-fA-F]+)\s*$",
+                        certificates, re.MULTILINE)
+    signer_count = re.search(r"^Number of signers: (\d+)\s*$", certificates, re.MULTILINE)
+    count = int(signer_count[1]) if signer_count else len(actual)
+    # New SDK tools report the same identity once per signature scheme.
+    if count != 1 or {digest.lower() for digest in actual} != {expected_certificate}:
         raise ValueError("APK signing certificate does not match the persistent release identity")
     return {"package": fields["name"], "version": version, "versionCode": code, "certificateSha256": expected_certificate}
 
