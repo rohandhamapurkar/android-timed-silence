@@ -41,6 +41,10 @@ object SettingsStore {
         prefs(context).getInt(KEY_END_VOLUME, EndingVolume.DEFAULT_PERCENT)
     )
 
+    fun setEndingVolumePercent(context: Context, percent: Int) {
+        prefs(context).edit { putInt(KEY_END_VOLUME, EndingVolume.percent(percent)) }
+    }
+
     fun remember(context: Context, durationMinutes: Int, targetMode: Int, endVolumePercent: Int = EndingVolume.DEFAULT_PERCENT) {
         prefs(context).edit {
             putInt(KEY_LAST_DURATION, durationMinutes)

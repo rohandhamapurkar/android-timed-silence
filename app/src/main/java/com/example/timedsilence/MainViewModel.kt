@@ -119,6 +119,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun lastDurationMinutes(): Int = SettingsStore.lastDurationMinutes(getApplication())
     fun lastTargetMode(): Int = SettingsStore.lastTargetMode(getApplication())
     fun endingVolumePercent(): Int = SettingsStore.endingVolumePercent(getApplication())
+    fun setEndingVolumePercent(percent: Int) = SettingsStore.setEndingVolumePercent(getApplication(), percent)
 
     private fun observeWorkStatus() {
         observeJob?.cancel()

@@ -309,6 +309,21 @@ class MainViewModelTest {
         verify(sharedPreferencesEditor, org.mockito.Mockito.times(2)).putInt("end_volume_percent", 45)
     }
 
+    @Test
+    fun `settings save immediately without changing the running timer snapshot`() {
+        viewModel.startSilence(30, AudioManager.RINGER_MODE_SILENT, 45)
+        val running = viewModel.activeSession.value
+        org.mockito.Mockito.clearInvocations(application, audioManager, sharedPreferencesEditor)
+
+        viewModel.setEndingVolumePercent(25)
+
+        verify(sharedPreferencesEditor).putInt("end_volume_percent", 25)
+        verify(application).getSharedPreferences("timed_silence_settings", Context.MODE_PRIVATE)
+        verify(application, never()).getSharedPreferences("timed_silence_prefs", Context.MODE_PRIVATE)
+        org.mockito.Mockito.verifyNoInteractions(audioManager)
+        org.junit.Assert.assertEquals(running, viewModel.activeSession.value)
+    }
+
     private fun stubFailedRestoration(endTime: Long) {
         `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_MODE, -1))
             .thenReturn(AudioManager.RINGER_MODE_NORMAL)

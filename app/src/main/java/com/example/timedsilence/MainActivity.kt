@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -32,13 +34,17 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.NotificationsPaused
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -48,6 +54,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -111,6 +118,7 @@ class MainActivity : ComponentActivity() {
 private val QUICK_DURATIONS = listOf(15, 30, 45, 60, 90)
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun TimedSilenceApp(viewModel: MainViewModel) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -125,6 +133,8 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
     var selectedMode by rememberSaveable { mutableStateOf(viewModel.lastTargetMode()) }
     var endingVolume by rememberSaveable { mutableStateOf(viewModel.endingVolumePercent()) }
     var readiness by remember { mutableStateOf(PermissionUtils.readiness(context)) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = showSettings) { showSettings = false }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -187,8 +197,66 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = { Text(if (showSettings) "Settings" else "Timed Silence") },
+                navigationIcon = {
+                    if (showSettings) IconButton(onClick = { showSettings = false }) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back to timer")
+                    }
+                },
+                actions = {
+                    if (!showSettings) IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Rounded.Settings, contentDescription = "Open settings")
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            if (!showSettings && !isSilenced) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)
+                        .navigationBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Button(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.requestStart(selectedDuration, selectedMode, endingVolume)
+                        },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = MaterialTheme.shapes.large
+                    ) {
+                        Text("Start Silence", style = MaterialTheme.typography.titleLarge)
+                    }
+                    if (!readiness.canStartTimer) {
+                        TextButton(onClick = { showSettings = true }) { Text("Setup needs attention") }
+                    } else {
+                        Text("Ending volume: $endingVolume%", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp))
+                    }
+                }
+            }
+        },
         contentWindowInsets = WindowInsets.safeDrawing
     ) { innerPadding ->
+        if (showSettings) {
+            TimerSettingsScreen(
+                modifier = Modifier.padding(innerPadding),
+                endingVolume = endingVolume,
+                onEndingVolumeChange = {
+                    endingVolume = it
+                    viewModel.setEndingVolumePercent(it)
+                },
+                isTimerActive = isSilenced,
+                readiness = readiness,
+                onSoundAccess = { PermissionUtils.requestNotificationPolicyAccess(context) },
+                onExactAlarms = { PermissionUtils.requestExactAlarmAccess(context) },
+                onNotifications = { PermissionUtils.requestNotificationSettings(context) }
+            )
+            return@Scaffold
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -203,31 +271,24 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
             Icon(
                 imageVector = if (isSilenced) Icons.Rounded.NotificationsOff else Icons.Rounded.NotificationsPaused,
                 contentDescription = null,
-                modifier = Modifier.size(120.dp),
+                modifier = Modifier.size(48.dp),
                 tint = if (isSilenced) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = if (isSilenced) "Silence Active" else "Timed Silence",
+                text = if (isSilenced) "Silence Active" else "Set a quiet timer",
                 style = MaterialTheme.typography.headlineLarge.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 36.sp
+                    fontSize = 30.sp
                 )
             )
 
             Text(
-                text = if (isSilenced) activeSession.describe() else "Set a duration and mode. The ringer turns on at expiry.",
+                text = if (isSilenced) activeSession.describe() else "The ringer turns on when the timer ends.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            ReadinessPanel(
-                readiness = readiness,
-                onSoundAccess = { PermissionUtils.requestNotificationPolicyAccess(context) },
-                onExactAlarms = { PermissionUtils.requestExactAlarmAccess(context) },
-                onNotifications = { PermissionUtils.requestNotificationSettings(context) }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -255,7 +316,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                     )
                 }
 
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
                     text = "Duration (Minutes)",
@@ -284,30 +345,6 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                     onMinutesSelected = { selectedDuration = it }
                 )
 
-                Text(
-                    text = "Ringer volume at expiry: $endingVolume%",
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(top = 24.dp)
-                )
-                Slider(
-                    value = endingVolume.toFloat(),
-                    onValueChange = { endingVolume = it.roundToInt() },
-                    valueRange = 1f..100f,
-                    modifier = Modifier.semantics { contentDescription = "Ringer volume at expiry" }
-                )
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                Button(
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        viewModel.requestStart(selectedDuration, selectedMode, endingVolume)
-                    },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = MaterialTheme.shapes.large
-                ) {
-                    Text("Start Silence", style = MaterialTheme.typography.titleLarge)
-                }
             } else {
                 if (restorationFailed) {
                     Text(
@@ -380,14 +417,52 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                 }
             }
 
-            Text(
-                text = "Version ${BuildConfig.VERSION_NAME}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 24.dp),
-                textAlign = TextAlign.Center
-            )
         }
+    }
+}
+
+@Composable
+private fun TimerSettingsScreen(
+    modifier: Modifier = Modifier,
+    endingVolume: Int,
+    onEndingVolumeChange: (Int) -> Unit,
+    isTimerActive: Boolean,
+    readiness: ReadinessStatus,
+    onSoundAccess: () -> Unit,
+    onExactAlarms: () -> Unit,
+    onNotifications: () -> Unit
+) {
+    Column(
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Sound", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Ending ringer volume", style = MaterialTheme.typography.titleSmall)
+                Text("$endingVolume%", style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.padding(top = 12.dp))
+                Slider(
+                    value = endingVolume.toFloat(),
+                    onValueChange = { onEndingVolumeChange(it.roundToInt()) },
+                    valueRange = 1f..100f,
+                    modifier = Modifier.semantics { contentDescription = "Ringer volume at expiry" }
+                )
+                Text(
+                    if (isTimerActive) "Applies to your next timer. The running timer keeps its saved ending volume."
+                    else "The ringer turns on at this volume when your timer ends. Saved automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Text("Device readiness", style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp))
+        ReadinessPanel(readiness, onSoundAccess, onExactAlarms, onNotifications)
+        Text("About", style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp))
+        Text("Timed Silence · Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -398,7 +473,7 @@ private fun ReadinessPanel(
     onExactAlarms: () -> Unit,
     onNotifications: () -> Unit
 ) {
-    Card(modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 when {
@@ -487,7 +562,7 @@ fun MinutePicker(
     onMinutesSelected: (Int) -> Unit
 ) {
     val minutesRange = remember { (1..120).toList() }
-    val itemHeight = 60.dp
+    val itemHeight = 48.dp
     val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
 
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedMinutes - 1)
@@ -537,7 +612,7 @@ fun MinutePicker(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(180.dp)
+            .height(144.dp)
             .semantics {
                 contentDescription = "Duration picker"
                 stateDescription = "$selectedMinutes minutes"
@@ -568,7 +643,7 @@ fun MinutePicker(
             state = listState,
             flingBehavior = snapFlingBehavior,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 60.dp),
+            contentPadding = PaddingValues(vertical = itemHeight),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             itemsIndexed(minutesRange) { index, minute ->
