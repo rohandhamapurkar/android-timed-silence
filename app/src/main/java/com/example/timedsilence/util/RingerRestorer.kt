@@ -39,8 +39,10 @@ object RingerRestorer {
             return false
         }
 
-        val mode = if (forceRinging || session.isDue()) AudioManager.RINGER_MODE_NORMAL else session.originalMode
-        val applied = applyRingerState(appContext, mode, session.originalVolume)
+        val expired = forceRinging || session.isDue()
+        val mode = if (expired) AudioManager.RINGER_MODE_NORMAL else session.originalMode
+        val applied = applyRingerState(appContext, mode, session.originalVolume,
+            endingVolumePercent = if (expired) session.endVolumePercent else null)
         if (!applied) {
             Log.w(TAG, "Ringer restore failed, leaving the session armed for another attempt")
             SilenceNotifications.showRestorationFailed(appContext)
@@ -55,27 +57,31 @@ object RingerRestorer {
     }
 
     /** Writes [mode] (and, where meaningful, [volume]) back to the ring stream. */
-    fun applyRingerState(context: Context, mode: Int, volume: Int): Boolean {
+    fun applyRingerState(context: Context, mode: Int, volume: Int, endingVolumePercent: Int? = null): Boolean {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         if (audioManager == null) {
             Log.e(TAG, "No AudioManager available, cannot restore the ringer")
             return false
         }
         return try {
+            var expectedVolume: Int? = null
             audioManager.ringerMode = mode
             // Sessions can start with ring volume zero. Expiry must still be
             // audible, so keep an existing positive volume or use the lowest
             // audible level instead of writing zero and re-entering silent mode.
             if (mode == AudioManager.RINGER_MODE_NORMAL) {
-                val audibleVolume = if (volume > 0) volume else
+                val audibleVolume = if (endingVolumePercent != null)
+                    EndingVolume.level(audioManager.getStreamMaxVolume(AudioManager.STREAM_RING), endingVolumePercent)
+                else if (volume > 0) volume else
                     audioManager.getStreamVolume(AudioManager.STREAM_RING).coerceAtLeast(1)
                 audioManager.setStreamVolume(AudioManager.STREAM_RING, audibleVolume, 0)
+                expectedVolume = audibleVolume
             }
             // A setter can return without changing the mode (for example when
             // the device's audio policy rejects it). Keep the recovery record
             // until a read-back confirms that the requested mode took effect.
             if (audioManager.ringerMode != mode ||
-                (mode == AudioManager.RINGER_MODE_NORMAL && audioManager.getStreamVolume(AudioManager.STREAM_RING) <= 0)) {
+                (expectedVolume != null && audioManager.getStreamVolume(AudioManager.STREAM_RING) != expectedVolume)) {
                 Log.w(TAG, "Ringer did not reach the requested audible state for mode=$mode")
                 return false
             }

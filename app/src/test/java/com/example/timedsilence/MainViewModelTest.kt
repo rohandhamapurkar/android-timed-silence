@@ -67,6 +67,7 @@ class MainViewModelTest {
         MockitoAnnotations.openMocks(this)
         Dispatchers.setMain(testDispatcher)
 
+        `when`(audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)).thenReturn(15)
         alarmManager = mock(AlarmManager::class.java)
         `when`(application.getSystemService(Context.ALARM_SERVICE)).thenReturn(alarmManager)
         `when`(alarmManager.canScheduleExactAlarms()).thenReturn(true)
@@ -296,6 +297,16 @@ class MainViewModelTest {
         assertTrue(viewModel.restorationFailed.value)
         verify(sharedPreferencesEditor, never()).clear()
         verify(workManager, never()).cancelUniqueWork(anyString())
+    }
+
+    @Test
+    fun `ending volume survives permission setup and is captured for expiry`() {
+        `when`(notificationManager.isNotificationPolicyAccessGranted).thenReturn(false)
+        viewModel.requestStart(30, AudioManager.RINGER_MODE_SILENT, 45)
+        `when`(notificationManager.isNotificationPolicyAccessGranted).thenReturn(true)
+        viewModel.onResumed()
+        // Both the session snapshot and remembered preference are written.
+        verify(sharedPreferencesEditor, org.mockito.Mockito.times(2)).putInt("end_volume_percent", 45)
     }
 
     private fun stubFailedRestoration(endTime: Long) {

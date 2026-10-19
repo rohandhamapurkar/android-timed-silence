@@ -14,7 +14,8 @@ data class SilenceSession(
     val originalVolume: Int,
     val endTimeMillis: Long,
     /** The mode the device was put into, for display only. [SilenceStore.NO_MODE] when unknown. */
-    val targetMode: Int = SilenceStore.NO_MODE
+    val targetMode: Int = SilenceStore.NO_MODE,
+    val endVolumePercent: Int = EndingVolume.DEFAULT_PERCENT
 ) {
     /** True once [endTimeMillis] has passed. [nowMillis] may be nudged forward to allow a trigger to fire slightly early. */
     fun isDue(nowMillis: Long = System.currentTimeMillis()): Boolean = endTimeMillis <= nowMillis
@@ -39,6 +40,7 @@ object SilenceStore {
     const val KEY_CAPTURED_VOLUME = "captured_volume"
     const val KEY_END_TIME = "end_time_millis"
     const val KEY_TARGET_MODE = "target_mode"
+    const val KEY_END_VOLUME = "end_volume_percent"
 
     /** Placeholder for a ringer mode that was not recorded. */
     const val NO_MODE = -1
@@ -61,6 +63,7 @@ object SilenceStore {
             putInt(KEY_CAPTURED_VOLUME, session.originalVolume)
             putLong(KEY_END_TIME, session.endTimeMillis)
             putInt(KEY_TARGET_MODE, session.targetMode)
+            putInt(KEY_END_VOLUME, EndingVolume.percent(session.endVolumePercent))
         }
     }
 
@@ -78,7 +81,8 @@ object SilenceStore {
             originalMode = mode,
             originalVolume = prefs.getInt(KEY_CAPTURED_VOLUME, NO_VOLUME),
             endTimeMillis = endTime,
-            targetMode = prefs.getInt(KEY_TARGET_MODE, NO_MODE)
+            targetMode = prefs.getInt(KEY_TARGET_MODE, NO_MODE),
+            endVolumePercent = EndingVolume.percent(prefs.getInt(KEY_END_VOLUME, EndingVolume.DEFAULT_PERCENT))
         )
     }
 

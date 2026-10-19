@@ -9,6 +9,7 @@ import androidx.lifecycle.asFlow
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
 import com.example.timedsilence.util.PermissionUtils
+import com.example.timedsilence.util.EndingVolume
 import com.example.timedsilence.util.RestorationScheduler
 import com.example.timedsilence.util.RingerRestorer
 import com.example.timedsilence.util.SettingsStore
@@ -65,7 +66,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Consumed by [onResumed] the moment permission is available, so the user
      * does not have to find and press Start a second time.
      */
-    private var pendingStart: Pair<Int, Int>? = null
+    private var pendingStart: Triple<Int, Int, Int>? = null
     private val _hasPendingStart = MutableStateFlow(false)
     val hasPendingStart: StateFlow<Boolean> = _hasPendingStart.asStateFlow()
 
@@ -104,7 +105,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (session == null) _restorationFailed.value = false
     }
 
-    private fun setPendingStart(request: Pair<Int, Int>?) {
+    private fun setPendingStart(request: Triple<Int, Int, Int>?) {
         pendingStart = request
         _hasPendingStart.value = request != null
     }
@@ -117,6 +118,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun lastDurationMinutes(): Int = SettingsStore.lastDurationMinutes(getApplication())
     fun lastTargetMode(): Int = SettingsStore.lastTargetMode(getApplication())
+    fun endingVolumePercent(): Int = SettingsStore.endingVolumePercent(getApplication())
 
     private fun observeWorkStatus() {
         observeJob?.cancel()
@@ -162,13 +164,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Returns true when access is available, false when permission is missing
      * (the caller should send the user to the permission screen).
      */
-    fun requestStart(durationMinutes: Int, targetMode: Int): Boolean {
+    fun requestStart(durationMinutes: Int, targetMode: Int, endVolumePercent: Int = EndingVolume.DEFAULT_PERCENT): Boolean {
         return if (hasRequiredAccess()) {
             setPendingStart(null)
-            startSilence(durationMinutes, targetMode)
+            startSilence(durationMinutes, targetMode, endVolumePercent)
             true
         } else {
-            setPendingStart(durationMinutes to targetMode)
+            setPendingStart(Triple(durationMinutes, targetMode, EndingVolume.percent(endVolumePercent)))
             false
         }
     }
@@ -183,7 +185,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (hasRequiredAccess()) {
             setPendingStart(null)
             if (_activeSession.value == null) {
-                startSilence(pending.first, pending.second)
+                startSilence(pending.first, pending.second, pending.third)
             }
         }
     }
@@ -196,7 +198,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         PermissionUtils.hasNotificationPolicyAccess(getApplication()) &&
             PermissionUtils.canScheduleExactAlarms(getApplication())
 
-    fun startSilence(durationMinutes: Int, targetMode: Int) {
+    fun startSilence(durationMinutes: Int, targetMode: Int, endVolumePercent: Int = EndingVolume.DEFAULT_PERCENT) {
         if (_activeSession.value != null) return
 
         try {
@@ -216,9 +218,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // the phone silent with no record of how to put it back.
             SilenceStore.save(
                 getApplication(),
-                SilenceSession(modeToRestore, volumeToRestore, endTimeMillis, targetMode)
+                SilenceSession(modeToRestore, volumeToRestore, endTimeMillis, targetMode, EndingVolume.percent(endVolumePercent))
             )
-            SettingsStore.remember(getApplication(), durationMinutes, targetMode)
+            SettingsStore.remember(getApplication(), durationMinutes, targetMode, endVolumePercent)
 
             // Arm recovery before muting, so interruption between these calls
             // cannot leave a silenced phone without a scheduled expiry.

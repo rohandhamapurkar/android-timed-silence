@@ -41,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -88,6 +89,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -119,6 +121,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
     // Seeded from the last session so a repeat is a single tap.
     var selectedDuration by rememberSaveable { mutableStateOf(viewModel.lastDurationMinutes()) }
     var selectedMode by rememberSaveable { mutableStateOf(viewModel.lastTargetMode()) }
+    var endingVolume by rememberSaveable { mutableStateOf(viewModel.endingVolumePercent()) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -272,6 +275,18 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                     onMinutesSelected = { selectedDuration = it }
                 )
 
+                Text(
+                    text = "Ringer volume at expiry: $endingVolume%",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 24.dp)
+                )
+                Slider(
+                    value = endingVolume.toFloat(),
+                    onValueChange = { endingVolume = it.roundToInt() },
+                    valueRange = 1f..100f,
+                    modifier = Modifier.semantics { contentDescription = "Ringer volume at expiry" }
+                )
+
                 Spacer(modifier = Modifier.height(32.dp))
 
                 if (!canScheduleExactAlarms) {
@@ -292,7 +307,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                 Button(
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        viewModel.requestStart(selectedDuration, selectedMode)
+                        viewModel.requestStart(selectedDuration, selectedMode, endingVolume)
                     },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = MaterialTheme.shapes.large

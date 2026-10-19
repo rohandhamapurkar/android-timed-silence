@@ -2,12 +2,13 @@
 
 ### Effortless temporary phone silencing.
 
-**TimedSilence** temporarily silences your Android device for a chosen duration. When the timer expires, it enables normal ringer mode even if the phone was silent or vibrating before the timer started. It uses the captured ring volume when positive, otherwise the current positive volume or the lowest audible level. Cancelling early restores the original mode instead.
+**TimedSilence** temporarily silences your Android device for a chosen duration. When the timer expires, it enables normal ringer mode even if the phone was silent or vibrating before the timer started. Choose the ending ring volume from 1–100%, defaulting to 100%. The selected percentage is saved with each timer and remembered for next time. Cancelling early restores the original mode instead.
 
 ## 🌟 Key Features
 
 *   **Material 3 UI**: A vibrant, energetic interface built with Jetpack Compose, featuring full edge-to-edge support for a modern look and feel.
 *   **Smart Minute Picker**: A high-performance, smooth-scrolling wheel to select your silence duration from 1 to 120 minutes.
+*   **Ending volume**: Choose 1–100% ring volume at expiry (default 100%). Cancelling early restores the original volume instead.
 *   **Mode Choice**: Easily toggle between **Silent** and **Vibrate** modes for the timed period.
 *   **Status Notification**: An ongoing notification keeps you informed of the active session, showing the exact time your ringer will be restored.
 *   **Reliability**: An **exact alarm** enables audible ringing at expiry, with a **WorkManager** job as a backstop. The saved original settings are used when cancelling early. Expiry is handled even when the app is closed, the screen is locked or the device has been restarted.

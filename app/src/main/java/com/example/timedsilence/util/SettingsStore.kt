@@ -15,6 +15,7 @@ object SettingsStore {
     const val PREFS_NAME = "timed_silence_settings"
     const val KEY_LAST_DURATION = "last_duration_minutes"
     const val KEY_LAST_MODE = "last_target_mode"
+    const val KEY_END_VOLUME = "end_volume_percent"
 
     const val DEFAULT_DURATION_MINUTES = 30
     const val MIN_DURATION_MINUTES = 1
@@ -36,10 +37,15 @@ object SettingsStore {
         }
     }
 
-    fun remember(context: Context, durationMinutes: Int, targetMode: Int) {
+    fun endingVolumePercent(context: Context): Int = EndingVolume.percent(
+        prefs(context).getInt(KEY_END_VOLUME, EndingVolume.DEFAULT_PERCENT)
+    )
+
+    fun remember(context: Context, durationMinutes: Int, targetMode: Int, endVolumePercent: Int = EndingVolume.DEFAULT_PERCENT) {
         prefs(context).edit {
             putInt(KEY_LAST_DURATION, durationMinutes)
             putInt(KEY_LAST_MODE, targetMode)
+            putInt(KEY_END_VOLUME, EndingVolume.percent(endVolumePercent))
         }
     }
 }

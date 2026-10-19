@@ -35,6 +35,7 @@ class RingerRestorerTest {
         var currentMode = AudioManager.RINGER_MODE_NORMAL
         `when`(audioManager.ringerMode).thenAnswer { currentMode }
         doAnswer { currentMode = it.getArgument(0); null }.`when`(audioManager).ringerMode = anyInt()
+        `when`(audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)).thenReturn(15)
         var currentVolume = 0
         `when`(audioManager.getStreamVolume(AudioManager.STREAM_RING)).thenAnswer { currentVolume }
         doAnswer { currentVolume = it.getArgument(1); null }.`when`(audioManager)
@@ -118,7 +119,7 @@ class RingerRestorerTest {
 
             assertTrue(RingerRestorer.restore(context, workManager))
             verify(audioManager).ringerMode = AudioManager.RINGER_MODE_NORMAL
-            verify(audioManager).setStreamVolume(AudioManager.STREAM_RING, 1, 0)
+            verify(audioManager).setStreamVolume(AudioManager.STREAM_RING, 15, 0)
             verify(editor).clear()
         }
     }
@@ -133,12 +134,12 @@ class RingerRestorerTest {
     }
 
     @Test
-    fun `expiry retains a captured audible ring volume`() {
+    fun `expiry uses full volume by default instead of captured volume`() {
         val (_, workManager) = stubSession(AudioManager.RINGER_MODE_SILENT, 6, System.currentTimeMillis() - 60_000)
 
         assertTrue(RingerRestorer.restore(context, workManager))
         verify(audioManager).ringerMode = AudioManager.RINGER_MODE_NORMAL
-        verify(audioManager).setStreamVolume(AudioManager.STREAM_RING, 6, 0)
+        verify(audioManager).setStreamVolume(AudioManager.STREAM_RING, 15, 0)
     }
 
     @Test
@@ -150,7 +151,23 @@ class RingerRestorerTest {
         TimedSilenceReceiver().onReceive(context, intent)
 
         verify(audioManager).ringerMode = AudioManager.RINGER_MODE_NORMAL
-        verify(audioManager).setStreamVolume(AudioManager.STREAM_RING, 1, 0)
+        verify(audioManager).setStreamVolume(AudioManager.STREAM_RING, 15, 0)
+    }
+
+    @Test
+    fun `expiry uses the session percentage even if preferences change`() {
+        val (_, wm) = stubSession(AudioManager.RINGER_MODE_SILENT, 3, System.currentTimeMillis() - 1000)
+        val prefs = context.getSharedPreferences(SilenceStore.PREFS_NAME, Context.MODE_PRIVATE)
+        `when`(prefs.getInt(SilenceStore.KEY_END_VOLUME, 100)).thenReturn(50)
+        assertTrue(RingerRestorer.restore(context, wm))
+        verify(audioManager).setStreamVolume(AudioManager.STREAM_RING, 8, 0)
+    }
+
+    @Test
+    fun `early cancel restores captured ringing volume instead of ending percentage`() {
+        val (_, wm) = stubSession(AudioManager.RINGER_MODE_NORMAL, 3, System.currentTimeMillis() + 60000)
+        assertTrue(RingerRestorer.restore(context, wm))
+        verify(audioManager).setStreamVolume(AudioManager.STREAM_RING, 3, 0)
     }
 
     private fun stubSession(mode: Int, volume: Int, endTime: Long): Pair<SharedPreferences.Editor, WorkManager> {
@@ -162,6 +179,7 @@ class RingerRestorerTest {
             .thenReturn(mode)
         `when`(prefs.getInt(SilenceStore.KEY_CAPTURED_VOLUME, SilenceStore.NO_VOLUME)).thenReturn(volume)
         `when`(prefs.getLong(SilenceStore.KEY_END_TIME, 0L)).thenReturn(endTime)
+        `when`(prefs.getInt(SilenceStore.KEY_END_VOLUME, 100)).thenReturn(100)
         `when`(prefs.edit()).thenReturn(editor)
         `when`(editor.clear()).thenReturn(editor)
         return editor to workManager
