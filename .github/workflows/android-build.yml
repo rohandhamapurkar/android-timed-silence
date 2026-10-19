@@ -42,6 +42,10 @@ jobs:
       # the build requests (this project asks for API 36.1).
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action defaults to "tools platform-tools", but the legacy
+          # "tools" package is no longer available from the SDK repository.
+          packages: platform-tools
 
       - name: Pre-install SDK packages (best effort)
         continue-on-error: true
