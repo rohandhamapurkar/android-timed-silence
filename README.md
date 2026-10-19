@@ -14,6 +14,7 @@
 *   **Expiry confirmation**: A quiet, dismissible notification confirms when the ringer successfully turned on. Failed restoration shows a recovery notification instead.
 *   **Reliability**: An **exact alarm** enables audible ringing at expiry, with a **WorkManager** job as a backstop. The saved original settings are used when cancelling early. Expiry is handled even when the app is closed, the screen is locked or the device has been restarted.
 *   **DND Access**: Seamlessly handles the "Notification Policy Access" required to modify ringer modes on modern Android versions.
+*   **Readiness check**: Shows sound access, exact-alarm access and notification availability, including blocked notification channels. Settings shortcuts help resolve missing access; status refreshes when you return to the app.
 *   **Version display**: The app shows its version below the main controls; release APKs use the GitHub tag's version.
 
 ## 🛠️ Tech Stack

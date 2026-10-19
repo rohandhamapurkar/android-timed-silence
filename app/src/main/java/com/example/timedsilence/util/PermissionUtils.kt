@@ -7,7 +7,34 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 
+data class ReadinessStatus(val soundAccess: Boolean, val exactAlarms: Boolean, val notifications: Boolean) {
+    val canStartTimer: Boolean get() = soundAccess && exactAlarms
+    val fullyReady: Boolean get() = canStartTimer && notifications
+}
+
 object PermissionUtils {
+    fun readiness(context: Context): ReadinessStatus = ReadinessStatus(
+        soundAccess = hasNotificationPolicyAccess(context),
+        exactAlarms = canScheduleExactAlarms(context),
+        notifications = notificationsEnabled(context)
+    )
+
+    fun notificationsEnabled(context: Context): Boolean = runCatching {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return@runCatching false
+        if (!manager.areNotificationsEnabled()) return@runCatching false
+        val channel = manager.getNotificationChannel(SilenceNotifications.CHANNEL_ID)
+        if (channel?.importance == NotificationManager.IMPORTANCE_NONE) return@runCatching false
+        val group = channel?.group?.let { manager.getNotificationChannelGroup(it) }
+        group?.isBlocked != true
+    }.getOrDefault(false)
+
+    fun requestNotificationSettings(context: Context) {
+        context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        })
+    }
+
     fun hasNotificationPolicyAccess(context: Context): Boolean {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         return notificationManager.isNotificationPolicyAccessGranted

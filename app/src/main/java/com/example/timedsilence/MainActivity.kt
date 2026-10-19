@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.NotificationsPaused
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -83,6 +84,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.timedsilence.ui.theme.TimedSilenceTheme
 import com.example.timedsilence.util.PermissionUtils
+import com.example.timedsilence.util.ReadinessStatus
 import com.example.timedsilence.util.SilenceNotifications
 import kotlinx.coroutines.flow.distinctUntilChanged
 import java.text.SimpleDateFormat
@@ -122,10 +124,12 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
     var selectedDuration by rememberSaveable { mutableStateOf(viewModel.lastDurationMinutes()) }
     var selectedMode by rememberSaveable { mutableStateOf(viewModel.lastTargetMode()) }
     var endingVolume by rememberSaveable { mutableStateOf(viewModel.endingVolumePercent()) }
+    var readiness by remember { mutableStateOf(PermissionUtils.readiness(context)) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { isGranted ->
+            readiness = PermissionUtils.readiness(context)
             if (!isGranted) {
                 Toast.makeText(context, "Permission denied for notifications.", Toast.LENGTH_SHORT).show()
             }
@@ -138,16 +142,14 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
         }
     }
 
-    var canScheduleExactAlarms by remember { mutableStateOf(PermissionUtils.canScheduleExactAlarms(context)) }
-    var hasDndAccess by remember { mutableStateOf(PermissionUtils.hasNotificationPolicyAccess(context)) }
+    val hasDndAccess = readiness.soundAccess
 
     // The session can end while the app is in the background, permissions can be
     // granted from Settings, and a start may be waiting on the DND screen - so
     // re-evaluate everything on every resume.
     LifecycleResumeEffect(Unit) {
         viewModel.onResumed()
-        canScheduleExactAlarms = PermissionUtils.canScheduleExactAlarms(context)
-        hasDndAccess = PermissionUtils.hasNotificationPolicyAccess(context)
+        readiness = PermissionUtils.readiness(context)
         onPauseOrDispose { }
     }
 
@@ -221,7 +223,14 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            ReadinessPanel(
+                readiness = readiness,
+                onSoundAccess = { PermissionUtils.requestNotificationPolicyAccess(context) },
+                onExactAlarms = { PermissionUtils.requestExactAlarmAccess(context) },
+                onNotifications = { PermissionUtils.requestNotificationSettings(context) }
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
 
             if (!isSilenced) {
                 Text(
@@ -288,21 +297,6 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                 )
 
                 Spacer(modifier = Modifier.height(32.dp))
-
-                if (!canScheduleExactAlarms) {
-                    Text(
-                        text = "Allow exact alarms before starting a timer to restore the ringer on time.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center
-                    )
-                    TextButton(
-                        onClick = { PermissionUtils.requestExactAlarmAccess(context) },
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    ) {
-                        Text("Allow exact alarms")
-                    }
-                }
 
                 Button(
                     onClick = {
@@ -394,6 +388,46 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                 textAlign = TextAlign.Center
             )
         }
+    }
+}
+
+@Composable
+private fun ReadinessPanel(
+    readiness: ReadinessStatus,
+    onSoundAccess: () -> Unit,
+    onExactAlarms: () -> Unit,
+    onNotifications: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                when {
+                    readiness.fullyReady -> "Ready for timers"
+                    readiness.canStartTimer -> "Timers ready; notifications off"
+                    else -> "Setup needs attention"
+                },
+                style = MaterialTheme.typography.titleSmall
+            )
+            ReadinessRow("Sound access", readiness.soundAccess, "Allow", onSoundAccess)
+            ReadinessRow("Exact alarms", readiness.exactAlarms, "Allow", onExactAlarms)
+            ReadinessRow("Notifications", readiness.notifications, "Enable", onNotifications)
+            if (!readiness.notifications) {
+                Text("Timers can run, but status and completion notifications are unavailable.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReadinessRow(label: String, ready: Boolean, action: String, onAction: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        if (ready) Text("Ready", style = MaterialTheme.typography.labelMedium)
+        else TextButton(onClick = onAction) { Text(action, modifier = Modifier.semantics {
+            contentDescription = "$action $label"
+        }) }
     }
 }
 
