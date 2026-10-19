@@ -41,6 +41,30 @@ app/build/outputs/apk/debug/app-debug.apk
 
 Rename it to something recognisable before sending, e.g. `TimedSilence-debug.apk`.
 
+### Version and signing identity
+
+Local builds default to version `1.0.1`. Override it to match a release tag:
+
+```bash
+./gradlew clean assembleDebug -PappVersion=v1.0.1
+```
+
+In PowerShell, quote the property argument: `'-PappVersion=v1.0.1'`.
+The app displays this version below its controls. Versions must use
+`MAJOR.MINOR.PATCH`, optionally prefixed with `v`, with each component 0–999
+and a version greater than `0.0.0`. The Android version code is
+`major * 1000000 + minor * 1000 + patch`; publish increasing versions.
+
+The release workflow passes the GitHub tag as `appVersion` and restores a
+persistent keystore from the encrypted `ANDROID_DEBUG_KEYSTORE_BASE64` repository
+secret. This secret contains the Base64-encoded local Android debug keystore;
+the standard debug alias and passwords are used. Keep the same key for future
+releases. Keystore files must not be committed or attached to a release.
+
+Locally, Gradle uses your existing Android debug keystore by default. Set
+`TIMEDSILENCE_KEYSTORE_PATH` to use a specific copy of the same keystore.
+Local APKs built with a different machine's debug key cannot update these releases.
+
 ### Why `clean` matters
 
 Gradle's incremental packager **reuses the previous APK file** and leaves dead
@@ -100,9 +124,10 @@ workflow if needed.
   installs it via a file manager and must allow "install from unknown sources";
   Google Play Protect may show a warning — expected for any sideloaded debug
   build.
-- **Upgrades**: a newer debug APK installs over an older one (same key). If the
-  recipient ever had a differently-signed build (e.g. a release build), they
-  must uninstall it first.
+- **Upgrades**: future releases use the same signing key and increasing version
+  codes so they can update in place. The initial `v1.0.0` CI APK used an ephemeral
+  runner key; switching from that APK requires one final uninstall and reinstall.
+  Uninstalling clears local app settings. End any active silence session first.
 - **Permissions**: no setup instructions needed — on first start the app walks
   the user through the Do Not Disturb access grant, and prompts for
   notifications and exact alarms itself.

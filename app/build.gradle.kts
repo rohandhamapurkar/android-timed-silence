@@ -3,6 +3,15 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Release tags and Android's displayed version share one source of truth.
+val appVersion = providers.gradleProperty("appVersion").orElse("1.0.1").get().removePrefix("v")
+require(appVersion.matches(Regex("""(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2})"""))) {
+    "appVersion must be MAJOR.MINOR.PATCH (optionally prefixed with v), with each component between 0 and 999"
+}
+val versionParts = appVersion.split('.').map(String::toInt)
+val appVersionCode = versionParts[0] * 1_000_000 + versionParts[1] * 1_000 + versionParts[2]
+require(appVersionCode > 0) { "appVersion must be newer than 0.0.0" }
+
 android {
     namespace = "com.example.timedsilence"
     compileSdk {
@@ -15,10 +24,21 @@ android {
         applicationId = "com.example.timedsilence"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            // CI restores the same keystore on every run instead of generating
+            // a new identity on each disposable runner. Local builds use the
+            // existing Android debug keystore unless this override is provided.
+            providers.environmentVariable("TIMEDSILENCE_KEYSTORE_PATH").orNull?.let {
+                storeFile = file(it)
+            }
+        }
     }
 
     buildTypes {
@@ -45,6 +65,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     testOptions {
         unitTests.isReturnDefaultValues = true

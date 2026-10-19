@@ -12,6 +12,7 @@
 *   **Status Notification**: An ongoing notification keeps you informed of the active session, showing the exact time your ringer will be restored.
 *   **Reliability**: An **exact alarm** enables audible ringing at expiry, with a **WorkManager** job as a backstop. The saved original settings are used when cancelling early. Expiry is handled even when the app is closed, the screen is locked or the device has been restarted.
 *   **DND Access**: Seamlessly handles the "Notification Policy Access" required to modify ringer modes on modern Android versions.
+*   **Version display**: The app shows its version below the main controls; release APKs use the GitHub tag's version.
 
 ## 🛠️ Tech Stack
 
@@ -73,6 +74,13 @@ Use a new version tag for each release. The workflow builds the debug APK and
 attaches it to the matching GitHub release. If no release exists, it creates one
 with generated notes. Existing release notes and publication status are preserved;
 re-running the tag workflow replaces an APK asset with the same filename.
+
+Use tags such as `v1.0.1` or `1.0.1` (three numeric components, each 0–999).
+The tag sets the APK's displayed version and an increasing Android version code.
+CI restores a persistent signing key from the `ANDROID_DEBUG_KEYSTORE_BASE64`
+repository secret so future releases can update the installed app without
+uninstalling it. Copies installed from earlier CI builds used a different key
+and need a one-time reinstall to switch to the persistent key.
 
 CI uses JDK 21 and Android SDK command-line tools. SDK setup explicitly installs
 `platform-tools`, avoiding the obsolete `tools` package that previously caused

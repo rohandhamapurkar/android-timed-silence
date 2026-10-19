@@ -370,6 +370,14 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                     Text(if (restorationFailed) "Retry restore" else "Cancel & Restore", style = MaterialTheme.typography.titleLarge)
                 }
             }
+
+            Text(
+                text = "Version ${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 24.dp),
+                textAlign = TextAlign.Center
+            )
         }
     }
 }

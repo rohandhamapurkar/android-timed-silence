@@ -5,7 +5,7 @@
 # The project is minSdk 36 / targetSdk 36 and ships no native (.so) libraries, so a single
 # universal APK is already the correct artifact for this device — no ABI splits needed.
 #
-# Debug is the variant to build here: it is signed with the standard Android debug key, so
+# Debug is the variant to build here: it uses a persistent debug signing key, so
 # the APK this produces installs straight onto the phone. (The release variant defines no
 # signingConfig, so it would come out unsigned and refuse to install.)
 name: Release Debug APK (Galaxy S26)
@@ -54,8 +54,24 @@ jobs:
 
       - run: chmod +x ./gradlew
 
+      - name: Restore persistent APK signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Set the ANDROID_DEBUG_KEYSTORE_BASE64 repository secret before publishing an APK."
+            exit 1
+          fi
+          keystore_path="$RUNNER_TEMP/timedsilence-debug.keystore"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          chmod 600 "$keystore_path"
+          echo "TIMEDSILENCE_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
+
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: ./gradlew assembleDebug --stacktrace -PappVersion="$RELEASE_TAG"
 
       - name: Collect APK
         id: collect
