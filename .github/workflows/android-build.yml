@@ -8,17 +8,14 @@
 # Debug is the variant to build here: it is signed with the standard Android debug key, so
 # the APK this produces installs straight onto the phone. (The release variant defines no
 # signingConfig, so it would come out unsigned and refuse to install.)
-name: Build Debug APK (Galaxy S26)
+name: Release Debug APK (Galaxy S26)
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+    tags: ['**']
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-debug-apk-${{ github.ref }}
@@ -95,3 +92,17 @@ jobs:
           path: artifacts/*.apk
           retention-days: 30
           if-no-files-found: error
+
+      - name: Attach APK to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/*.apk --clobber
+          else
+            gh release create "$RELEASE_TAG" artifacts/*.apk \
+              --verify-tag --title "$RELEASE_TAG" --generate-notes
+          fi

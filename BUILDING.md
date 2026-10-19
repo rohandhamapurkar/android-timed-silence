@@ -72,6 +72,28 @@ compile time.
 
 ## Sending it to someone
 
+### GitHub releases
+
+The release workflow runs only when a tag is pushed, including a new tag created
+through GitHub's release UI. Branch pushes, pull requests and manual dispatches
+do not build an APK.
+
+Create a GitHub release with a new tag pointing at the updated `main`, or push a tag:
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+The workflow builds the debug APK and attaches it to the release for that tag.
+If there is no release yet, it creates one with generated notes. If the release
+already exists, its title, notes and publication status are preserved. Re-running
+the workflow replaces the APK asset with the same filename. Creating a release
+for an already-pushed tag does not start another build; re-run the original tag
+workflow if needed.
+
+### Installing the APK
+
 - **Android version**: `minSdk` is 36, so the phone must run **Android 16+**.
   The install fails with an uninformative error on anything older.
 - **Debug signing**: the APK is signed with the shared debug key. The recipient
