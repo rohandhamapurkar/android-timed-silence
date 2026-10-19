@@ -1,15 +1,18 @@
 package com.example.timedsilence
 
 import android.app.Application
+import android.app.AlarmManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.media.AudioManager
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -25,6 +28,8 @@ import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mock
 import org.mockito.ArgumentMatchers.longThat
 import org.mockito.Mockito.atLeastOnce
+import org.mockito.Mockito.doAnswer
+import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
@@ -45,6 +50,7 @@ class MainViewModelTest {
     lateinit var audioManager: AudioManager
     @Mock
     lateinit var notificationManager: NotificationManager
+    private lateinit var alarmManager: AlarmManager
     @Mock
     lateinit var workManager: WorkManager
     @Mock
@@ -60,6 +66,18 @@ class MainViewModelTest {
     fun setup() {
         MockitoAnnotations.openMocks(this)
         Dispatchers.setMain(testDispatcher)
+
+        alarmManager = mock(AlarmManager::class.java)
+        `when`(application.getSystemService(Context.ALARM_SERVICE)).thenReturn(alarmManager)
+        `when`(alarmManager.canScheduleExactAlarms()).thenReturn(true)
+        doAnswer {
+            `when`(audioManager.ringerMode).thenReturn(it.getArgument(0))
+            null
+        }.`when`(audioManager).ringerMode = anyInt()
+        doAnswer {
+            `when`(audioManager.getStreamVolume(AudioManager.STREAM_RING)).thenReturn(it.getArgument(1))
+            null
+        }.`when`(audioManager).setStreamVolume(anyInt(), anyInt(), anyInt())
 
         `when`(application.getSystemService(Context.AUDIO_SERVICE)).thenReturn(audioManager)
         `when`(application.getSystemService(Context.NOTIFICATION_SERVICE)).thenReturn(notificationManager)
@@ -81,6 +99,7 @@ class MainViewModelTest {
 
     @After
     fun tearDown() {
+        viewModel.viewModelScope.cancel()
         Dispatchers.resetMain()
     }
 
@@ -95,7 +114,7 @@ class MainViewModelTest {
         `when`(audioManager.getStreamVolume(AudioManager.STREAM_RING)).thenReturn(originalVolume)
 
         viewModel.startSilence(duration, targetMode)
-        testDispatcher.scheduler.advanceUntilIdle()
+        testDispatcher.scheduler.runCurrent()
 
         // Verify state capture
         verify(sharedPreferencesEditor).putInt(MainViewModel.KEY_CAPTURED_MODE, originalMode)
@@ -118,7 +137,7 @@ class MainViewModelTest {
             .thenReturn(System.currentTimeMillis() + 600_000L)
 
         viewModel.cancelSilence()
-        testDispatcher.scheduler.advanceUntilIdle()
+        testDispatcher.scheduler.runCurrent()
 
         // Verify restoration
         verify(audioManager).ringerMode = savedMode
@@ -235,5 +254,55 @@ class MainViewModelTest {
         verify(audioManager).ringerMode = AudioManager.RINGER_MODE_NORMAL
         verify(sharedPreferencesEditor).clear()
         assertFalse(viewModel.isSilenced.value)
+    }
+
+    @Test
+    fun `start waits for exact alarms even with DND access`() {
+        `when`(notificationManager.isNotificationPolicyAccessGranted).thenReturn(true)
+        `when`(alarmManager.canScheduleExactAlarms()).thenReturn(false)
+
+        assertFalse(viewModel.requestStart(1, AudioManager.RINGER_MODE_SILENT))
+        viewModel.onResumed()
+        assertTrue(viewModel.hasPendingStart.value)
+        verify(audioManager, never()).ringerMode = anyInt()
+
+        `when`(alarmManager.canScheduleExactAlarms()).thenReturn(true)
+        viewModel.onResumed()
+        assertFalse(viewModel.hasPendingStart.value)
+        assertTrue(viewModel.isSilenced.value)
+        verify(audioManager).ringerMode = AudioManager.RINGER_MODE_SILENT
+    }
+
+    @Test
+    fun `failed expiry stays visible and cannot overwrite captured sound settings`() {
+        stubFailedRestoration(System.currentTimeMillis() - 60_000L)
+
+        viewModel.refreshState()
+        viewModel.startSilence(30, AudioManager.RINGER_MODE_SILENT)
+
+        assertTrue(viewModel.isSilenced.value)
+        assertTrue(viewModel.restorationFailed.value)
+        verify(sharedPreferencesEditor, never()).clear()
+        verify(sharedPreferencesEditor, never()).putInt(MainViewModel.KEY_CAPTURED_MODE, AudioManager.RINGER_MODE_SILENT)
+    }
+
+    @Test
+    fun `cancel does not discard sound settings when restoration is refused`() {
+        stubFailedRestoration(System.currentTimeMillis() + 60_000L)
+
+        viewModel.cancelSilence()
+
+        assertTrue(viewModel.isSilenced.value)
+        assertTrue(viewModel.restorationFailed.value)
+        verify(sharedPreferencesEditor, never()).clear()
+        verify(workManager, never()).cancelUniqueWork(anyString())
+    }
+
+    private fun stubFailedRestoration(endTime: Long) {
+        `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_MODE, -1))
+            .thenReturn(AudioManager.RINGER_MODE_NORMAL)
+        `when`(sharedPreferences.getInt(MainViewModel.KEY_CAPTURED_VOLUME, -1)).thenReturn(5)
+        `when`(sharedPreferences.getLong(MainViewModel.KEY_END_TIME, 0L)).thenReturn(endTime)
+        doThrow(SecurityException("DND access revoked")).`when`(audioManager).ringerMode = anyInt()
     }
 }

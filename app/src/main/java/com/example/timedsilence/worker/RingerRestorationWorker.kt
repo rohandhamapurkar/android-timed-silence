@@ -42,7 +42,7 @@ class RingerRestorationWorker(
         // Deliberately no Notification Policy check here: bailing out when DND
         // access had been revoked left the phone silent forever. Attempt the
         // restore and let WorkManager retry if the platform refuses.
-        return if (RingerRestorer.restore(applicationContext)) {
+        return if (RingerRestorer.restore(applicationContext, forceRinging = true)) {
             Result.success()
         } else {
             Log.w(TAG, "Could not restore the ringer, scheduling a retry")

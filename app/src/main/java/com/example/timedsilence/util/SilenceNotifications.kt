@@ -53,7 +53,7 @@ object SilenceNotifications {
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_lock_silent_mode)
                 .setContentTitle("Timed Silence Active")
-                .setContentText("Ringer restores at $endTimeStr")
+                .setContentText("Ringer turns on at $endTimeStr")
                 .setOngoing(true)
                 .setShowWhen(true)
                 .setWhen(endTimeMillis)
@@ -78,6 +78,25 @@ object SilenceNotifications {
     fun cancel(context: Context) {
         runCatching { notificationManager(context)?.cancel(NOTIFICATION_ID) }
             .onFailure { Log.w(TAG, "Could not cancel the ongoing notification", it) }
+    }
+
+    fun showRestorationFailed(context: Context) {
+        createChannel(context)
+        runCatching {
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_lock_silent_mode)
+                .setContentTitle("Ringer restoration needs attention")
+                .setContentText("Open Timed Silence to check access and retry restoring your sound.")
+                .setOngoing(true)
+                .setContentIntent(contentIntent(context))
+                .addAction(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    "Retry restore",
+                    broadcast(context, REQUEST_STOP, TimedSilenceReceiver.ACTION_STOP)
+                )
+                .build()
+            notificationManager(context)?.notify(NOTIFICATION_ID, notification)
+        }.onFailure { Log.w(TAG, "Could not post the restoration failure", it) }
     }
 
     private fun notificationManager(context: Context): NotificationManager? =

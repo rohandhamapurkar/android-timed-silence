@@ -6,7 +6,7 @@ import android.util.Log
 import androidx.work.WorkManager
 
 /**
- * The single implementation of "put the ringer back the way we found it".
+ * Ends silence: expiry enables ringing; an early stop restores the captured state.
  *
  * Every trigger - the exact alarm, the WorkManager backstop, the notification's
  * Stop action and the in-app Cancel button - funnels through here so they can
@@ -17,20 +17,19 @@ object RingerRestorer {
     private const val TAG = "RingerRestorer"
 
     /**
-     * Restores the captured ringer state and tears the session down.
+     * Enables the ringer at expiry, or restores the captured state on an early stop.
      *
      * Idempotent: once the stored session is gone this is a no-op, so it does not
      * matter whether the alarm or the backstop worker gets there first.
      *
-     * @param tearDownOnFailure clears the session even when the ringer could not be
-     * written. Used by the explicit user cancel; the background triggers leave the
-     * session armed instead so a later attempt can still recover.
+     * @param forceRinging used by expiry triggers delivered within their early tolerance.
      * @return true when the ringer was actually restored.
      */
+    @Synchronized
     fun restore(
         context: Context,
         workManager: WorkManager? = null,
-        tearDownOnFailure: Boolean = false
+        forceRinging: Boolean = false
     ): Boolean {
         val appContext = context.applicationContext
         val session = SilenceStore.read(appContext)
@@ -40,9 +39,11 @@ object RingerRestorer {
             return false
         }
 
-        val applied = applyRingerState(appContext, session.originalMode, session.originalVolume)
-        if (!applied && !tearDownOnFailure) {
+        val mode = if (forceRinging || session.isDue()) AudioManager.RINGER_MODE_NORMAL else session.originalMode
+        val applied = applyRingerState(appContext, mode, session.originalVolume)
+        if (!applied) {
             Log.w(TAG, "Ringer restore failed, leaving the session armed for another attempt")
+            SilenceNotifications.showRestorationFailed(appContext)
             return false
         }
 
@@ -62,18 +63,27 @@ object RingerRestorer {
         }
         return try {
             audioManager.ringerMode = mode
-            // Only replay a ring volume for a mode that actually rings, and only when
-            // it is audible: writing 0 to STREAM_RING pushes the device straight back
-            // into vibrate/silent and undoes the ringer mode that was just set, which
-            // left the phone silent after any session started from vibrate or silent.
-            if (mode == AudioManager.RINGER_MODE_NORMAL && volume > 0) {
-                audioManager.setStreamVolume(AudioManager.STREAM_RING, volume, 0)
+            // Sessions can start with ring volume zero. Expiry must still be
+            // audible, so keep an existing positive volume or use the lowest
+            // audible level instead of writing zero and re-entering silent mode.
+            if (mode == AudioManager.RINGER_MODE_NORMAL) {
+                val audibleVolume = if (volume > 0) volume else
+                    audioManager.getStreamVolume(AudioManager.STREAM_RING).coerceAtLeast(1)
+                audioManager.setStreamVolume(AudioManager.STREAM_RING, audibleVolume, 0)
+            }
+            // A setter can return without changing the mode (for example when
+            // the device's audio policy rejects it). Keep the recovery record
+            // until a read-back confirms that the requested mode took effect.
+            if (audioManager.ringerMode != mode ||
+                (mode == AudioManager.RINGER_MODE_NORMAL && audioManager.getStreamVolume(AudioManager.STREAM_RING) <= 0)) {
+                Log.w(TAG, "Ringer did not reach the requested audible state for mode=$mode")
+                return false
             }
             Log.d(TAG, "Restored ringer mode=$mode volume=$volume")
             true
-        } catch (e: SecurityException) {
-            // Happens when Notification Policy (DND) access was revoked mid-session.
-            Log.e(TAG, "Not allowed to change the ringer, is DND access still granted?", e)
+        } catch (e: RuntimeException) {
+            // Includes revoked DND access and failures from the device audio service.
+            Log.e(TAG, "Could not change the ringer", e)
             false
         }
     }

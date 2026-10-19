@@ -114,6 +114,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
     val activeSession by viewModel.activeSession.collectAsState()
     val remainingMillis by viewModel.remainingMillis.collectAsState()
     val hasPendingStart by viewModel.hasPendingStart.collectAsState()
+    val restorationFailed by viewModel.restorationFailed.collectAsState()
 
     // Seeded from the last session so a repeat is a single tap.
     var selectedDuration by rememberSaveable { mutableStateOf(viewModel.lastDurationMinutes()) }
@@ -134,7 +135,8 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
         }
     }
 
-    var canScheduleExactAlarms by remember { mutableStateOf(true) }
+    var canScheduleExactAlarms by remember { mutableStateOf(PermissionUtils.canScheduleExactAlarms(context)) }
+    var hasDndAccess by remember { mutableStateOf(PermissionUtils.hasNotificationPolicyAccess(context)) }
 
     // The session can end while the app is in the background, permissions can be
     // granted from Settings, and a start may be waiting on the DND screen - so
@@ -142,23 +144,30 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
     LifecycleResumeEffect(Unit) {
         viewModel.onResumed()
         canScheduleExactAlarms = PermissionUtils.canScheduleExactAlarms(context)
+        hasDndAccess = PermissionUtils.hasNotificationPolicyAccess(context)
         onPauseOrDispose { }
     }
 
     // Rationale shown instead of dumping the user straight into system Settings.
     if (hasPendingStart) {
+        val needsDndAccess = !hasDndAccess
         AlertDialog(
             onDismissRequest = { viewModel.abandonPendingStart() },
-            title = { Text("Allow Do Not Disturb access") },
+            title = { Text(if (needsDndAccess) "Allow Do Not Disturb access" else "Allow exact alarms") },
             text = {
                 Text(
-                    "To silence the ringer and bring it back automatically, Android requires " +
+                    if (needsDndAccess) "To silence the ringer and turn it on when the timer expires, Android requires " +
                         "“Do Not Disturb” access for this app.\n\n" +
-                        "Grant it on the next screen and your session will start when you return."
+                        "Grant it on the next screen to continue setting up your timer."
+                    else "Allow alarms and reminders so Android can restore your ringer when the timer " +
+                        "expires, even with the screen off. Your session will start when you return."
                 )
             },
             confirmButton = {
-                TextButton(onClick = { PermissionUtils.requestNotificationPolicyAccess(context) }) {
+                TextButton(onClick = {
+                    if (needsDndAccess) PermissionUtils.requestNotificationPolicyAccess(context)
+                    else PermissionUtils.requestExactAlarmAccess(context)
+                }) {
                     Text("Open settings")
                 }
             },
@@ -204,7 +213,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
             )
 
             Text(
-                text = if (isSilenced) activeSession.describe() else "Set a duration and mode.",
+                text = if (isSilenced) activeSession.describe() else "Set a duration and mode. The ringer turns on at expiry.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -267,7 +276,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
 
                 if (!canScheduleExactAlarms) {
                     Text(
-                        text = "Exact alarms are off, so the ringer may come back a few minutes late.",
+                        text = "Allow exact alarms before starting a timer to restore the ringer on time.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         textAlign = TextAlign.Center
@@ -291,6 +300,16 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                     Text("Start Silence", style = MaterialTheme.typography.titleLarge)
                 }
             } else {
+                if (restorationFailed) {
+                    Text(
+                        text = "Sound could not be restored. Check Do Not Disturb access, then retry.",
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
+                    )
+                    TextButton(onClick = { PermissionUtils.requestNotificationPolicyAccess(context) }) {
+                        Text("Check sound access")
+                    }
+                }
                 Text(
                     text = "Restoring in",
                     style = MaterialTheme.typography.labelLarge,
@@ -314,7 +333,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
 
                 activeSession?.let { session ->
                     Text(
-                        text = "Returns at ${formatWallClock(session.endTimeMillis)}",
+                        text = "Ringer turns on at ${formatWallClock(session.endTimeMillis)}",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp)
@@ -324,6 +343,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                 Spacer(modifier = Modifier.height(32.dp))
 
                 OutlinedButton(
+                    enabled = !restorationFailed,
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         viewModel.extendSilence()
@@ -347,7 +367,7 @@ fun TimedSilenceApp(viewModel: MainViewModel) {
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = MaterialTheme.shapes.large
                 ) {
-                    Text("Cancel & Restore", style = MaterialTheme.typography.titleLarge)
+                    Text(if (restorationFailed) "Retry restore" else "Cancel & Restore", style = MaterialTheme.typography.titleLarge)
                 }
             }
         }

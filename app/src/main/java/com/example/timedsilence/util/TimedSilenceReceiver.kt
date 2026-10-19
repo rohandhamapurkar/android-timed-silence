@@ -19,7 +19,7 @@ class TimedSilenceReceiver : BroadcastReceiver() {
             ACTION_RESTORE -> onRestoreAlarm(context)
             ACTION_STOP -> {
                 Log.d(TAG, "Restoring early from the notification action")
-                RingerRestorer.restore(context, tearDownOnFailure = true)
+                RingerRestorer.restore(context)
             }
             ACTION_EXTEND -> onExtend(context)
             else -> Log.w(TAG, "Ignoring unexpected action ${intent.action}")
@@ -42,7 +42,7 @@ class TimedSilenceReceiver : BroadcastReceiver() {
             return
         }
         Log.d(TAG, "Restoration alarm fired, restoring ringer")
-        RingerRestorer.restore(context)
+        RingerRestorer.restore(context, forceRinging = true)
     }
 
     private fun onExtend(context: Context) {

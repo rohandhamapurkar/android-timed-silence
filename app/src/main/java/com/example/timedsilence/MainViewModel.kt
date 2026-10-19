@@ -57,6 +57,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isSilenced = MutableStateFlow(false)
     val isSilenced: StateFlow<Boolean> = _isSilenced.asStateFlow()
 
+    private val _restorationFailed = MutableStateFlow(false)
+    val restorationFailed: StateFlow<Boolean> = _restorationFailed.asStateFlow()
+
     /**
      * A start request parked while the user is off granting DND access.
      * Consumed by [onResumed] the moment permission is available, so the user
@@ -98,6 +101,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun setActive(session: ActiveSession?) {
         _activeSession.value = session
         _isSilenced.value = session != null
+        if (session == null) _restorationFailed.value = false
     }
 
     private fun setPendingStart(request: Pair<Int, Int>?) {
@@ -140,12 +144,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshState() {
         val session = SilenceStore.read(getApplication())
         if (session == null) {
+            expiryJob?.cancel()
             setActive(null)
             return
         }
-        if (session.isDue()) {
-            RingerRestorer.restore(getApplication(), workManager)
-            setActive(null)
+        if (session.isDue() || _restorationFailed.value) {
+            restoreSession()
             return
         }
         setActive(ActiveSession(session.endTimeMillis, session.targetMode))
@@ -154,12 +158,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Starts a session, or parks the request until DND access is granted.
-     * Returns true when the session started, false when permission is missing
+     * Starts a session, or parks the request until DND and exact alarm access are granted.
+     * Returns true when access is available, false when permission is missing
      * (the caller should send the user to the permission screen).
      */
     fun requestStart(durationMinutes: Int, targetMode: Int): Boolean {
-        return if (PermissionUtils.hasNotificationPolicyAccess(getApplication())) {
+        return if (hasRequiredAccess()) {
             setPendingStart(null)
             startSilence(durationMinutes, targetMode)
             true
@@ -176,7 +180,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onResumed() {
         refreshState()
         val pending = pendingStart ?: return
-        if (PermissionUtils.hasNotificationPolicyAccess(getApplication())) {
+        if (hasRequiredAccess()) {
             setPendingStart(null)
             if (_activeSession.value == null) {
                 startSilence(pending.first, pending.second)
@@ -187,6 +191,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun abandonPendingStart() {
         setPendingStart(null)
     }
+
+    private fun hasRequiredAccess(): Boolean =
+        PermissionUtils.hasNotificationPolicyAccess(getApplication()) &&
+            PermissionUtils.canScheduleExactAlarms(getApplication())
 
     fun startSilence(durationMinutes: Int, targetMode: Int) {
         if (_activeSession.value != null) return
@@ -212,22 +220,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             SettingsStore.remember(getApplication(), durationMinutes, targetMode)
 
-            audioManager.ringerMode = targetMode
-
+            // Arm recovery before muting, so interruption between these calls
+            // cannot leave a silenced phone without a scheduled expiry.
             RestorationScheduler.schedule(getApplication(), endTimeMillis, workManager)
+            audioManager.ringerMode = targetMode
             SilenceNotifications.showOngoing(getApplication(), endTimeMillis)
 
             setActive(ActiveSession(endTimeMillis, targetMode))
             scheduleExpiryRefresh(endTimeMillis)
         } catch (e: Exception) {
             Log.e(TAG, "Error starting silence", e)
-            RingerRestorer.restore(getApplication(), workManager, tearDownOnFailure = true)
-            setActive(null)
+            val session = SilenceStore.read(getApplication())
+            if (session != null) restoreSession() else setActive(null)
         }
     }
 
     /** Pushes the deadline out by [EXTENSION_MINUTES] and re-arms both triggers. */
     fun extendSilence() {
+        if (_restorationFailed.value) return
         val current = _activeSession.value ?: return
         val newEndTime = maxOf(current.endTimeMillis, System.currentTimeMillis()) +
             TimeUnit.MINUTES.toMillis(EXTENSION_MINUTES.toLong())
@@ -242,8 +252,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelSilence() {
         expiryJob?.cancel()
-        RingerRestorer.restore(getApplication(), workManager, tearDownOnFailure = true)
-        setActive(null)
+        val session = SilenceStore.read(getApplication())
+        if (session != null) restoreSession() else setActive(null)
+    }
+
+    private fun restoreSession() {
+        if (RingerRestorer.restore(getApplication(), workManager)) {
+            setActive(null)
+        } else {
+            // Never offer a new session while the original settings still need
+            // restoring: starting again would capture the silenced state.
+            val remaining = SilenceStore.read(getApplication())
+            setActive(remaining?.let { ActiveSession(it.endTimeMillis, it.targetMode) })
+            _restorationFailed.value = remaining != null
+        }
     }
 
     /** Flips the UI back to idle the moment the session ends while the app is open. */
